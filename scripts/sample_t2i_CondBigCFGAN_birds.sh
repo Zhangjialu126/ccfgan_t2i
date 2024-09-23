@@ -19,8 +19,8 @@ CUDA_VISIBLE_DEVICES=3 python sample_t2i.py \
 --G_ch 64 --D_ch 64 \
 --ema --use_ema --ema_start 20000 \
 --test_every 2000 --save_every 1000 --num_best_copies 5 --num_save_copies 2 --seed 0 \
---skip_init --use_ema --G_eval_mode --load_weights copy1 \
+--skip_init --use_ema --G_eval_mode --load_weights best4 \
 --sample_inception_metrics --sample_npz  --sample_random --sample_sheets --sample_interps \
 --sample_num_npz 30000 \
 --data_root /mnt/ssd2/zhangjialu/GALIP/data/ \
---name_suffix t2i_v1
+--name_suffix t2i_v2_1

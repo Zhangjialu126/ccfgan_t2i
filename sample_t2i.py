@@ -42,7 +42,7 @@ def calc_clip_sim(clip, fake, caps_clip, device):
     fake = transf_to_CLIP_input(fake)
     fake_features = clip.encode_image(fake)
     text_features = clip.encode_text(caps_clip)
-    text_img_sim = torch.cosine_similarity(fake_features, text_features).mean()
+    text_img_sim = torch.cosine_similarity(fake_features, text_features).sum()
     return text_img_sim
 
 
@@ -227,10 +227,6 @@ def run(config):
         tf_fid = calculate_fid_given_paths(paths, batch_size=500)
         print('Pytorch FID is: ', tf_fid)
         print('CLIP score is: ', clip_score)
-        metircs_filename = '%s/%s/%d/metrics.txt' % (config['samples_root'], experiment_name, config['sample_sheet_folder_num'])
-        with open(metircs_filename, 'w', encoding='utf-8') as f:
-            f.write(f"Pytorch FID is:\t{tf_fid}\n")
-            f.write(f"CLIP score is:\t{clip_score}\n")
 
     # Save ground truth image, generated image and the corresponding text
     with torch.no_grad():
@@ -256,6 +252,11 @@ def run(config):
         with open(captions_filename, 'w', encoding='utf-8') as f:
             for i, caption in enumerate(captions):
                 f.write(f"{i}\t{caption}\n")
+        metircs_filename = '%s/%s/%d/metrics.txt' % (
+        config['samples_root'], experiment_name, config['sample_sheet_folder_num'])
+        with open(metircs_filename, 'w', encoding='utf-8') as f:
+            f.write(f"Pytorch FID is:\t{tf_fid}\n")
+            f.write(f"CLIP score is:\t{clip_score}\n")
 
     # # Sample interp sheets
     # if config['sample_interps']:

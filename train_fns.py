@@ -247,13 +247,20 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
 
                 # CLIP_real, real_emb = image_encoder(x[counter])
 
-                cf_x, cf_target = GD(z_, x[counter], sent_emb, train_G=False, split_D=config['split_D'])
+                cf_x, cf_target, pred_emb_x, pred_emb_target, G_z = GD(z_, x[counter], sent_emb, train_G=False, split_D=config['split_D'])
 
                 critic_loss = cf_loss_fn(cf_x, cf_target)
                 D_loss = - critic_loss / float(config['num_D_accumulations'])
 
+                # emb loss
+                mse_loss = nn.MSELoss()
+                emb_loss_x = - torch.cosine_similarity(pred_emb_x, sent_emb.float().detach()).mean()
+                emb_loss_target = - torch.cosine_similarity(pred_emb_target, sent_emb.float()).mean()
+                # emb_loss_target = mse_loss(pred_emb_target, sent_emb.float().detach())
+                emb_loss = (emb_loss_x + emb_loss_target) / float(config['num_D_accumulations'])
+
                 # total loss
-                total_loss = D_loss
+                total_loss = D_loss + emb_loss
 
                 total_loss.backward()
                 counter += 1
@@ -288,14 +295,25 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
             sent_emb = sent_emb.requires_grad_()
             words_embs = words_embs.requires_grad_()
 
-            cf_x, cf_target = GD(z_, x[counter], sent_emb, train_G=True, split_D=config['split_D'])
+            cf_x, cf_target, pred_emb_x, pred_emb_target, G_z = GD(z_, x[counter], sent_emb, train_G=True, split_D=config['split_D'])
+
+            # emb loss
+            mse_loss = nn.MSELoss()
+            emb_loss_x = - torch.cosine_similarity(pred_emb_x, sent_emb.float()).mean()
+            emb_loss_target = - torch.cosine_similarity(pred_emb_target, sent_emb.float()).mean()
+            # emb_loss_target = mse_loss(pred_emb_target, sent_emb.float())
+            emb_loss = (emb_loss_x + emb_loss_target) / float(config['num_G_accumulations'])
+
+            # text img sim
+            CLIP_fake, fake_emb = image_encoder(G_z)
+            text_img_sim = - torch.cosine_similarity(fake_emb, sent_emb.float()).mean() / float(config['num_G_accumulations'])
 
             # calculate critic loss
             critic_loss = cf_loss_fn(cf_x, cf_target)
             G_loss = critic_loss / float(config['num_G_accumulations'])
 
             # total loss
-            total_loss = G_loss
+            total_loss = G_loss + emb_loss + text_img_sim
 
             total_loss.backward()
             counter += 1
@@ -314,10 +332,12 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
             ema.update(state_dict['itr'])
 
         out = {'G_loss': float(G_loss.item()) * 1e4,
-               'D_loss': float(D_loss.item()) * 1e4}
+               'D_loss': float(D_loss.item()) * 1e4,
+               'emb_loss': float(emb_loss.item()) * 1e4}
         # Return G's loss and the components of D's loss.
         writer.add_scalar('G_loss', G_loss.item(), state_dict['itr'])
         writer.add_scalar('D_loss', D_loss.item(), state_dict['itr'])
+        writer.add_scalar('emb_loss', emb_loss.item(), state_dict['itr'])
         return out
 
     return train
@@ -483,7 +503,7 @@ def calc_clip_sim(clip, fake, caps_clip, device):
     fake = transf_to_CLIP_input(fake)
     fake_features = clip.encode_image(fake)
     text_features = clip.encode_text(caps_clip)
-    text_img_sim = torch.cosine_similarity(fake_features, text_features).mean()
+    text_img_sim = torch.cosine_similarity(fake_features, text_features).sum()
     return text_img_sim
 
 

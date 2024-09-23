@@ -535,8 +535,8 @@ class Discriminator(nn.Module):
         # to be over blocks at a given resolution (resblocks and/or self-attention)
         self.blocks = []
         for index in range(len(self.arch['out_channels'])):
-            self.blocks += [[layers.DBlock(in_channels=self.arch['in_channels'][index],
-                                           out_channels=self.arch['out_channels'][index],
+            self.blocks += [[layers.DBlock(in_channels=self.y_dim * 2 if index == self.arch['y_index'] else self.arch['in_channels'][index],
+                                           out_channels=self.y_dim if index == self.arch['y_index'] - 1 else self.arch['out_channels'][index],
                                            which_conv=self.which_conv,
                                            wide=self.D_wide,
                                            activation=self.activation,
@@ -553,6 +553,7 @@ class Discriminator(nn.Module):
         # larger if we're e.g. turning this into a VAE with an inference output
         self.linear = self.which_linear(self.arch['out_channels'][-1], self.output_dim)
         # self.linear = self.which_linear(self.arch['out_channels'][-1] + self.y_dim, self.output_dim)
+        self.pred_linear = self.which_linear(self.arch['out_channels'][-1], self.y_dim)
 
 
         # Initialize weights
@@ -598,7 +599,7 @@ class Discriminator(nn.Module):
         # Loop over blocks
         for index, blocklist in enumerate(self.blocks):
             if index == self.arch['y_index']:
-                y_h = y.view(-1, self.arch['in_channels'][self.arch['y_index'] - 1], 1, 1)
+                y_h = y.view(-1, self.y_dim, 1, 1)
                 y_h = y_h.repeat(1, 1, h.shape[2], h.shape[3])
                 h = torch.cat((h, y_h), 1)
             for block in blocklist:
@@ -608,7 +609,8 @@ class Discriminator(nn.Module):
         # Get initial class-unconditional output
         # h = torch.cat([h, y], dim=1)
         out = self.linear(h)
-        return out
+        pred_emb = self.pred_linear(h)
+        return out, pred_emb
 
 
 # Parallelized G_D to minimize cross-gpu communication
@@ -639,15 +641,16 @@ class G_D(nn.Module):
         CLIP_real, real_emb = self.image_encoder(x)
         CLIP_fake, fake_emb = self.image_encoder(G_z)
         if split_D:
-            D_fake = self.D(CLIP_fake, sent_emb)
-            D_real = self.D(CLIP_real, sent_emb)
-            return D_fake, D_real
+            D_fake, pred_emb_fake = self.D(CLIP_fake, sent_emb)
+            D_real, pred_emb_real = self.D(CLIP_real, sent_emb)
+            return D_fake, D_real, pred_emb_fake, pred_emb_real, G_z
         # If real data is provided, concatenate it with the Generator's output
         # along the batch dimension for improved efficiency.
         else:
             D_input = torch.cat([G_z, x], 0)
             D_class = torch.cat([sent_emb, sent_emb], 0)
             # Get Discriminator output
-            D_out = self.D(D_input, D_class)
+            D_out, pred_emb_out = self.D(D_input, D_class)
             D_fake, D_real = torch.split(D_out, [G_z.shape[0], x.shape[0]])
-            return D_fake, D_real # D_fake, D_real
+            pred_emb_fake, pred_emb_real = torch.split(pred_emb_out, [G_z.shape[0], x.shape[0]])
+            return D_fake, D_real, pred_emb_fake, pred_emb_real, G_z # D_fake, D_real
