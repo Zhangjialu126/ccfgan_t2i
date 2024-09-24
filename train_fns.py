@@ -32,6 +32,17 @@ def dummy_training_function():
     return train
 
 
+def get_x_gt(feat_in, y_dim):
+    features_flat = feat_in.view(feat_in.shape[0], -1)
+    min_val = features_flat.min(dim=1, keepdim=True)[0]
+    max_val = features_flat.max(dim=1, keepdim=True)[0]
+    normalized_features = (features_flat - min_val) / (max_val - min_val)
+    scaled_features = normalized_features * (y_dim - 1)
+    quantized_features = scaled_features.round().long()
+    ground_truth = quantized_features.max(dim=1)[0]
+    return ground_truth
+
+
 def RCFGAN_training_function(G, D, GD, loss_fn, z_, y_, ema, state_dict, config, writer):
     def train(x, y):
         G.optim.zero_grad()
@@ -243,24 +254,73 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
                 sent_emb, words_embs = t2i_dset.encode_tokens(text_encoder, CLIP_token[counter])
                 # x = x.requires_grad_()
                 sent_emb = sent_emb.requires_grad_()
+                sent_emb = sent_emb.float()
                 words_embs = words_embs.requires_grad_()
 
-                # CLIP_real, real_emb = image_encoder(x[counter])
+                cf_x, cf_target, h_x, h_target, G_z = GD(z_, x[counter], sent_emb,
+                                                                                      train_G=False,
+                                                                                      split_D=config['split_D'])
 
-                cf_x, cf_target, pred_emb_x, pred_emb_target, G_z = GD(z_, x[counter], sent_emb, train_G=False, split_D=config['split_D'])
+                # calculate tx
+                hx_x = D.linear_y(sent_emb) * h_x
+                hx_target = D.linear_y(sent_emb) * h_target
+                hx_x = D.linear_hx(hx_x)
+                hx_target = D.linear_hx(hx_target)
+                hx_x = torch.unsqueeze(hx_x, -1)
+                hx_target = torch.unsqueeze(hx_target, -1)
+                tx_x = D.tx_linear(hx_x)
+                tx_target = D.tx_linear(hx_target)
 
-                critic_loss = cf_loss_fn(cf_x, cf_target)
+                # classifier loss
+                if config['require_classifier'] == True:
+                    p_x_ac, p_x_mi, p_x_adc = D.classifier(D.linear_y(sent_emb))
+                    p_target_ac, p_target_mi, p_target_adc = D.classifier(D.linear_y(sent_emb))
+                    CLIP_x, _ = image_encoder(G_z)
+                    x_gt_x = get_x_gt(CLIP_x, config['x_dim'])
+                    CLIP_target, _ = image_encoder(x[counter])
+                    x_gt_target = get_x_gt(CLIP_target, config['x_dim'])
+                    if config['c_mode'] == 'ac':
+                        p_x = p_x_ac
+                        p_target = p_target_ac
+                        D_ac_loss = CELoss(p_target_ac, x_gt_target)
+                        D_aux_loss = D_ac_loss
+                    elif config['c_mode'] == 'tac':
+                        p_x = p_x_ac
+                        p_target = p_target_ac
+                        D_ac_loss = CELoss(p_target_ac, x_gt_target)
+                        D_mi_loss = CELoss(p_x_mi, x_gt_x)
+                        D_aux_loss = D_ac_loss + D_mi_loss
+                    elif config['c_mode'] == 'adc':
+                        p_x = p_x_adc
+                        p_target = p_target_adc
+                        D_adc_loss_real = CELoss(p_target_adc, x_gt_target * 2)
+                        D_adc_loss_fake = CELoss(p_x_adc, x_gt_x * 2 + 1)
+                        D_aux_loss = D_adc_loss_real + D_adc_loss_fake
+                    else:
+                        print('The input classifer mode is not available!')
+                    C_loss_D = config['CD_lambda'] * D_aux_loss / float(config['num_D_accumulations'])
+                else:
+                    # calculate projection
+                    CLIP_x, _ = image_encoder(G_z)
+                    x_embed_x = get_x_gt(CLIP_x, config['x_dim'])
+                    x_embed_x = D.proj_embed(x_embed_x)
+                    CLIP_target, _ = image_encoder(x[counter])
+                    x_embed_target = get_x_gt(CLIP_target, config['x_dim'])
+                    x_embed_target = D.proj_embed(x_embed_target)
+                    p_x = D.linear_proj(D.linear_y(sent_emb)) * x_embed_x
+                    p_target = D.linear_proj(D.linear_y(sent_emb)) * x_embed_target
+
+                # calculate critic loss
+                p_x = D.softmax(p_x)
+                p_target = D.softmax(p_target)
+                critic_loss = cf_loss_fn(cf_x, cf_target, tx_x, tx_target, p_x, p_target)
                 D_loss = - critic_loss / float(config['num_D_accumulations'])
 
-                # emb loss
-                mse_loss = nn.MSELoss()
-                emb_loss_x = - torch.cosine_similarity(pred_emb_x, sent_emb.float().detach()).mean()
-                emb_loss_target = - torch.cosine_similarity(pred_emb_target, sent_emb.float()).mean()
-                # emb_loss_target = mse_loss(pred_emb_target, sent_emb.float().detach())
-                emb_loss = (emb_loss_x + emb_loss_target) / float(config['num_D_accumulations'])
-
                 # total loss
-                total_loss = D_loss + emb_loss
+                if config['require_classifier'] == True:
+                    total_loss = D_loss + C_loss_D
+                else:
+                    total_loss = D_loss
 
                 total_loss.backward()
                 counter += 1
@@ -291,29 +351,78 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
             # y_.sample_()
 
             sent_emb, words_embs = t2i_dset.encode_tokens(text_encoder, CLIP_token[counter])
-            # x = x.requires_grad_()
             sent_emb = sent_emb.requires_grad_()
+            sent_emb = sent_emb.float()
             words_embs = words_embs.requires_grad_()
 
-            cf_x, cf_target, pred_emb_x, pred_emb_target, G_z = GD(z_, x[counter], sent_emb, train_G=True, split_D=config['split_D'])
+            cf_x, cf_target, h_x, h_target, G_z = GD(z_, x[counter], sent_emb,
+                                                                                  train_G=True,
+                                                                                  split_D=config['split_D'])
 
-            # emb loss
-            mse_loss = nn.MSELoss()
-            emb_loss_x = - torch.cosine_similarity(pred_emb_x, sent_emb.float()).mean()
-            emb_loss_target = - torch.cosine_similarity(pred_emb_target, sent_emb.float()).mean()
-            # emb_loss_target = mse_loss(pred_emb_target, sent_emb.float())
-            emb_loss = (emb_loss_x + emb_loss_target) / float(config['num_G_accumulations'])
+            # calculate tx
+            hx_x = D.linear_y(sent_emb) * h_x
+            hx_target = D.linear_y(sent_emb) * h_target
+            hx_x = D.linear_hx(hx_x)
+            hx_target = D.linear_hx(hx_target)
+            hx_x = torch.unsqueeze(hx_x, -1)
+            hx_target = torch.unsqueeze(hx_target, -1)
+            tx_x = D.tx_linear(hx_x)
+            tx_target = D.tx_linear(hx_target)
+
+            # classifier loss
+            if config['require_classifier'] == True:
+                p_x_ac, p_x_mi, p_x_adc = D.classifier(D.linear_y(sent_emb))
+                p_target_ac, p_target_mi, p_target_adc = D.classifier(D.linear_y(sent_emb))
+                CLIP_x, _ = image_encoder(G_z)
+                x_gt_x = get_x_gt(CLIP_x, config['x_dim'])
+                CLIP_target, _ = image_encoder(x[counter])
+                x_gt_target = get_x_gt(CLIP_target, config['x_dim'])
+                if config['c_mode'] == 'ac':
+                    p_x = p_x_ac
+                    p_target = p_target_ac
+                    G_ac_loss = CELoss(p_x_ac, x_gt_x)
+                    G_aux_loss = G_ac_loss
+                elif config['c_mode'] == 'tac':
+                    p_x = p_x_ac
+                    p_target = p_target_ac
+                    G_ac_loss = CELoss(p_x_ac, x_gt_x)
+                    G_mi_loss = CELoss(p_x_mi, x_gt_x)
+                    G_aux_loss = G_ac_loss + G_mi_loss
+                elif config['c_mode'] == 'adc':
+                    p_x = p_x_adc
+                    p_target = p_target_adc
+                    G_adc_loss_pos = CELoss(p_x_adc, x_gt_x * 2)
+                    G_adc_loss_neg = CELoss(p_x_adc, x_gt_x * 2 + 1)
+                    G_aux_loss = G_adc_loss_pos - G_adc_loss_neg
+                else:
+                    print('The input classifer mode is not available!')
+                C_loss_G = config['CG_lambda'] * G_aux_loss / float(config['num_G_accumulations'])
+            else:
+                # calculate projection
+                CLIP_x, _ = image_encoder(G_z)
+                x_embed_x = get_x_gt(CLIP_x, config['x_dim'])
+                x_embed_x = D.proj_embed(x_embed_x)
+                CLIP_target, _ = image_encoder(x[counter])
+                x_embed_target = get_x_gt(CLIP_target, config['x_dim'])
+                x_embed_target = D.proj_embed(x_embed_target)
+                p_x = D.linear_proj(D.linear_y(sent_emb)) * x_embed_x
+                p_target = D.linear_proj(D.linear_y(sent_emb)) * x_embed_target
+
+            # calculate critic loss
+            p_x = D.softmax(p_x)
+            p_target = D.softmax(p_target)
+            critic_loss = cf_loss_fn(cf_x, cf_target, tx_x, tx_target, p_x, p_target)
+            G_loss = critic_loss / float(config['num_G_accumulations'])
 
             # text img sim
             CLIP_fake, fake_emb = image_encoder(G_z)
-            text_img_sim = - torch.cosine_similarity(fake_emb, sent_emb.float()).mean() / float(config['num_G_accumulations'])
-
-            # calculate critic loss
-            critic_loss = cf_loss_fn(cf_x, cf_target)
-            G_loss = critic_loss / float(config['num_G_accumulations'])
+            text_img_sim = - torch.cosine_similarity(fake_emb, sent_emb).mean() / float(config['num_G_accumulations'])
 
             # total loss
-            total_loss = G_loss + emb_loss + text_img_sim
+            if config['require_classifier'] == True:
+                total_loss = G_loss + C_loss_G + text_img_sim
+            else:
+                total_loss = G_loss + text_img_sim
 
             total_loss.backward()
             counter += 1
@@ -331,13 +440,26 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
         if config['ema']:
             ema.update(state_dict['itr'])
 
-        out = {'G_loss': float(G_loss.item()) * 1e4,
-               'D_loss': float(D_loss.item()) * 1e4,
-               'emb_loss': float(emb_loss.item()) * 1e4}
-        # Return G's loss and the components of D's loss.
-        writer.add_scalar('G_loss', G_loss.item(), state_dict['itr'])
-        writer.add_scalar('D_loss', D_loss.item(), state_dict['itr'])
-        writer.add_scalar('emb_loss', emb_loss.item(), state_dict['itr'])
+        if config['require_classifier'] == True:
+            out = {'G_loss': float(G_loss.item()) * 1e4,
+                   'D_loss': float(D_loss.item()) * 1e4,
+                   'C_loss_G': float(C_loss_G.item()) * 1e4,
+                   'C_loss_D': float(C_loss_D.item()) * 1e4,
+                   'text_img_sim': float(text_img_sim.item()) * 1e4}
+            # Return G's loss and the components of D's loss.
+            writer.add_scalar('G_loss', G_loss.item(), state_dict['itr'])
+            writer.add_scalar('D_loss', D_loss.item(), state_dict['itr'])
+            writer.add_scalar('C_loss_G', C_loss_G.item(), state_dict['itr'])
+            writer.add_scalar('C_loss_D', C_loss_D.item(), state_dict['itr'])
+            writer.add_scalar('text_img_sim', text_img_sim.item(), state_dict['itr'])
+        else:
+            out = {'G_loss': float(G_loss.item()) * 1e4,
+                   'D_loss': float(D_loss.item()) * 1e4,
+                   'text_img_sim': float(text_img_sim.item()) * 1e4}
+            # Return G's loss and the components of D's loss.
+            writer.add_scalar('G_loss', G_loss.item(), state_dict['itr'])
+            writer.add_scalar('D_loss', D_loss.item(), state_dict['itr'])
+            writer.add_scalar('text_img_sim', text_img_sim.item(), state_dict['itr'])
         return out
 
     return train

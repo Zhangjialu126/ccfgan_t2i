@@ -208,7 +208,7 @@ def run(config):
             train = train_fns.CFGAN_training_function(G, D, GD, cf_loss_fn, z_, y_,
                                                         ema, state_dict, config, tbwriter)
         else:
-            cf_loss_fn = CFLossFunc2()
+            cf_loss_fn = CFLossFuncCond()
             # cf_loss_fn = CFLossFuncCond()
             train = train_fns.CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_fn, z_, y_,
                                                         ema, state_dict, config, tbwriter)

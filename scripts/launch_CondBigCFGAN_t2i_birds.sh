@@ -1,7 +1,7 @@
 #!/bin/bash
-CUDA_VISIBLE_DEVICES=4,5,6,3 python train.py \
---which_train_fn CFGAN \
---dataset t2i_birds --parallel --shuffle  --num_workers 8 --batch_size 64 \
+CUDA_VISIBLE_DEVICES=0,1 python train.py \
+--which_train_fn CFGAN  --x_dim 256 \
+--dataset t2i_birds --parallel --shuffle  --num_workers 8 --batch_size 32 \
 --num_G_accumulations 1 --num_D_accumulations 1 \
 --num_D_steps 2 --G_lr 1e-4 --D_lr  2e-4 --D_B2 0.999 --G_B2 0.999 \
 --G_attn 64 --D_attn 64 \
@@ -20,6 +20,8 @@ CUDA_VISIBLE_DEVICES=4,5,6,3 python train.py \
 --test_every 2000 --save_every 2000 --num_best_copies 5 --num_save_copies 2 --seed 0 \
 --data_root /mnt/ssd2/zhangjialu/GALIP/data/ \
 --npz_path /mnt/ssd2/zhangjialu/GALIP/data/birds/npz/bird_val256_FIDK0.npz \
---name_suffix t2i_v2_2 \
+--name_suffix xgy_v1_proj \
 --num_epochs 3200 \
 #--resume \
+#--require_classifier \
+#--c_mode adc --CD_lambda 0.3 --CG_lambda 0.3 \

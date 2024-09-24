@@ -231,6 +231,7 @@ def prepare_parser():
                         help='Load m1 and s1 for calculate FID score for text-to-image. (default: %(default)s)')
     parser.add_argument('--times', type=int, default=12, help='Sample times for calculate FID (default: %(default)s)')
     parser.add_argument('--test_imgs_num', type=int, default=30000, help='test_imgs_num (default: %(default)s)')
+    parser.add_argument('--x_dim', type=int, default=256, help='Dimension of output x (default: %(default)s)')
 
     ### Bookkeping stuff ###
     parser.add_argument(

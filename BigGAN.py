@@ -445,29 +445,25 @@ class Generator(nn.Module):
 # Discriminator architecture, same paradigm as G's above
 def D_arch(ch=64, attention='64', ksize='333333', dilation='111111'):
     arch = {}
-    arch[256] = {'in_channels': [3] + [ch * item for item in [1, 2, 4, 8, 16, 16]],
-                 'y_index': 5,
+    arch[256] = {'in_channels': [3] + [ch * item for item in [1, 2, 4, 8, 8, 16]],
                  'out_channels': [item * ch for item in [1, 2, 4, 8, 8, 16, 16]],
                  'downsample': [True] * 6 + [False],
                  'resolution': [128, 64, 32, 16, 8, 4, 4],
                  'attention': {2 ** i: 2 ** i in [int(item) for item in attention.split('_')]
                                for i in range(2, 8)}}
-    arch[128] = {'in_channels': [3] + [ch * item for item in [1, 2, 4, 16, 16]],
-                 'y_index': 4,
+    arch[128] = {'in_channels': [3] + [ch * item for item in [1, 2, 4, 8, 16]],
                  'out_channels': [item * ch for item in [1, 2, 4, 8, 16, 16]],
                  'downsample': [True] * 5 + [False],
                  'resolution': [64, 32, 16, 8, 4, 4],
                  'attention': {2 ** i: 2 ** i in [int(item) for item in attention.split('_')]
                                for i in range(2, 8)}}
-    arch[64] = {'in_channels': [3] + [ch * item for item in [1, 2, 8, 8]],
-                'y_index': 3,
+    arch[64] = {'in_channels': [3] + [ch * item for item in [1, 2, 4, 8]],
                 'out_channels': [item * ch for item in [1, 2, 4, 8, 16]],
                 'downsample': [True] * 4 + [False],
                 'resolution': [32, 16, 8, 4, 4],
                 'attention': {2 ** i: 2 ** i in [int(item) for item in attention.split('_')]
                               for i in range(2, 7)}}
-    arch[32] = {'in_channels': [3] + [item * ch for item in [4, 8, 4]],
-                'y_index': 2,
+    arch[32] = {'in_channels': [3] + [item * ch for item in [4, 4, 4]],
                 'out_channels': [item * ch for item in [4, 4, 4, 4]],
                 'downsample': [True, True, False, False],
                 'resolution': [16, 8, 8, 8],
@@ -489,6 +485,7 @@ class Discriminator(nn.Module):
         # output_dim = kwargs['dim_z']
         self.output_dim = kwargs['t_dim']
         self.y_dim = kwargs['shared_dim']
+        self.x_dim = kwargs['x_dim']
         # Width multiplier
         self.ch = D_ch
         # Use Wide D as in BigGAN and SA-GAN or skinny D as in SN-GAN?
@@ -535,8 +532,8 @@ class Discriminator(nn.Module):
         # to be over blocks at a given resolution (resblocks and/or self-attention)
         self.blocks = []
         for index in range(len(self.arch['out_channels'])):
-            self.blocks += [[layers.DBlock(in_channels=self.y_dim * 2 if index == self.arch['y_index'] else self.arch['in_channels'][index],
-                                           out_channels=self.y_dim if index == self.arch['y_index'] - 1 else self.arch['out_channels'][index],
+            self.blocks += [[layers.DBlock(in_channels=self.arch['in_channels'][index],
+                                           out_channels=self.arch['out_channels'][index],
                                            which_conv=self.which_conv,
                                            wide=self.D_wide,
                                            activation=self.activation,
@@ -553,7 +550,24 @@ class Discriminator(nn.Module):
         # larger if we're e.g. turning this into a VAE with an inference output
         self.linear = self.which_linear(self.arch['out_channels'][-1], self.output_dim)
         # self.linear = self.which_linear(self.arch['out_channels'][-1] + self.y_dim, self.output_dim)
-        self.pred_linear = self.which_linear(self.arch['out_channels'][-1], self.y_dim)
+
+        if not self.unconditional:
+            self.linear_y = self.which_linear(self.y_dim, self.arch['out_channels'][-1])
+            self.linear_hx = self.which_linear(self.arch['out_channels'][-1], self.output_dim)
+            # classifier
+            if self.require_classifier:
+                self.ac = self.which_linear(self.arch['out_channels'][-1], self.x_dim)
+                self.mi = self.which_linear(self.arch['out_channels'][-1], self.x_dim)
+                self.adc = self.which_linear(self.arch['out_channels'][-1], self.x_dim * 2)
+                if self.c_mode == 'adc':
+                    self.tx_linear = self.which_linear(1, self.x_dim * 2)
+                else:
+                    self.tx_linear = self.which_linear(1, self.x_dim)
+            else:
+                self.tx_linear = self.which_linear(1, self.x_dim)
+                self.proj_embed = self.which_embedding(self.x_dim, self.x_dim)
+                self.linear_proj = self.which_linear(self.arch['out_channels'][-1], self.x_dim)
+            self.softmax = nn.Softmax(dim=1)
 
 
         # Initialize weights
@@ -598,10 +612,6 @@ class Discriminator(nn.Module):
         h = x
         # Loop over blocks
         for index, blocklist in enumerate(self.blocks):
-            if index == self.arch['y_index']:
-                y_h = y.view(-1, self.y_dim, 1, 1)
-                y_h = y_h.repeat(1, 1, h.shape[2], h.shape[3])
-                h = torch.cat((h, y_h), 1)
             for block in blocklist:
                 h = block(h)
         # Apply global sum pooling as in SN-GAN
@@ -609,8 +619,13 @@ class Discriminator(nn.Module):
         # Get initial class-unconditional output
         # h = torch.cat([h, y], dim=1)
         out = self.linear(h)
-        pred_emb = self.pred_linear(h)
-        return out, pred_emb
+        return out, h
+
+    def classifier(self, h):
+        pred_ac = self.ac(h)
+        pred_mi = self.mi(h)
+        pred_adc = self.adc(h)
+        return pred_ac, pred_mi, pred_adc
 
 
 # Parallelized G_D to minimize cross-gpu communication
@@ -641,16 +656,16 @@ class G_D(nn.Module):
         CLIP_real, real_emb = self.image_encoder(x)
         CLIP_fake, fake_emb = self.image_encoder(G_z)
         if split_D:
-            D_fake, pred_emb_fake = self.D(CLIP_fake, sent_emb)
-            D_real, pred_emb_real = self.D(CLIP_real, sent_emb)
-            return D_fake, D_real, pred_emb_fake, pred_emb_real, G_z
+            D_fake, h_fake = self.D(CLIP_fake, sent_emb)
+            D_real, h_real = self.D(CLIP_real, sent_emb)
+            return D_fake, D_real, h_fake, h_real, G_z
         # If real data is provided, concatenate it with the Generator's output
         # along the batch dimension for improved efficiency.
         else:
             D_input = torch.cat([G_z, x], 0)
             D_class = torch.cat([sent_emb, sent_emb], 0)
             # Get Discriminator output
-            D_out, pred_emb_out = self.D(D_input, D_class)
+            D_out, h_out = self.D(D_input, D_class)
             D_fake, D_real = torch.split(D_out, [G_z.shape[0], x.shape[0]])
-            pred_emb_fake, pred_emb_real = torch.split(pred_emb_out, [G_z.shape[0], x.shape[0]])
-            return D_fake, D_real, pred_emb_fake, pred_emb_real, G_z # D_fake, D_real
+            h_fake, h_real = torch.split(h_out, [G_z.shape[0], x.shape[0]])
+            return D_fake, D_real, h_fake, h_real, G_z # D_fake, D_real
