@@ -20,7 +20,7 @@ CUDA_VISIBLE_DEVICES=0,1 python train.py \
 --test_every 2000 --save_every 2000 --num_best_copies 5 --num_save_copies 2 --seed 0 \
 --data_root /mnt/ssd2/zhangjialu/GALIP/data/ \
 --npz_path /mnt/ssd2/zhangjialu/GALIP/data/birds/npz/bird_val256_FIDK0.npz \
---name_suffix xgy_v1_proj \
+--name_suffix xgy_v2 \
 --num_epochs 3200 \
 #--resume \
 #--require_classifier \

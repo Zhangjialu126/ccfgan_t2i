@@ -564,10 +564,12 @@ class Discriminator(nn.Module):
                 else:
                     self.tx_linear = self.which_linear(1, self.x_dim)
             else:
-                self.tx_linear = self.which_linear(1, self.x_dim)
-                self.proj_embed = self.which_embedding(self.x_dim, self.x_dim)
+                # self.tx_linear = self.which_linear(1, self.x_dim)
+                # self.proj_embed = self.which_embedding(self.x_dim, self.x_dim)
                 self.linear_proj = self.which_linear(self.arch['out_channels'][-1], self.x_dim)
+                self.linear_x = self.which_linear(3 * 768 * 7 * 7, self.x_dim)
             self.softmax = nn.Softmax(dim=1)
+            self.sigmoid = nn.Sigmoid()
 
 
         # Initialize weights

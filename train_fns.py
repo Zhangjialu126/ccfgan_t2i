@@ -268,8 +268,10 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
                 hx_target = D.linear_hx(hx_target)
                 hx_x = torch.unsqueeze(hx_x, -1)
                 hx_target = torch.unsqueeze(hx_target, -1)
-                tx_x = D.tx_linear(hx_x)
-                tx_target = D.tx_linear(hx_target)
+                tx_x = hx_x
+                tx_target = hx_target
+                # tx_x = D.tx_linear(hx_x)
+                # tx_target = D.tx_linear(hx_target)
 
                 # classifier loss
                 if config['require_classifier'] == True:
@@ -302,17 +304,25 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
                 else:
                     # calculate projection
                     CLIP_x, _ = image_encoder(G_z)
-                    x_embed_x = get_x_gt(CLIP_x, config['x_dim'])
-                    x_embed_x = D.proj_embed(x_embed_x)
+                    x_embed_x = CLIP_x.view(CLIP_x.shape[0], -1)
+                    x_embed_x = D.linear_x(x_embed_x)
+                    # x_embed_x = get_x_gt(CLIP_x, config['x_dim'])
+                    # x_embed_x = D.proj_embed(x_embed_x)
                     CLIP_target, _ = image_encoder(x[counter])
-                    x_embed_target = get_x_gt(CLIP_target, config['x_dim'])
-                    x_embed_target = D.proj_embed(x_embed_target)
+                    x_embed_target = CLIP_target.view(CLIP_target.shape[0], -1)
+                    x_embed_target = D.linear_x(x_embed_target)
+                    # x_embed_target = get_x_gt(CLIP_target, config['x_dim'])
+                    # x_embed_target = D.proj_embed(x_embed_target)
                     p_x = D.linear_proj(D.linear_y(sent_emb)) * x_embed_x
+                    p_x = p_x.mean(1).unsqueeze(-1)
+                    p_x = D.sigmoid(p_x)
                     p_target = D.linear_proj(D.linear_y(sent_emb)) * x_embed_target
+                    p_target = p_target.mean(1).unsqueeze(-1)
+                    p_target = D.sigmoid(p_target)
 
                 # calculate critic loss
-                p_x = D.softmax(p_x)
-                p_target = D.softmax(p_target)
+                # p_x = D.softmax(p_x)
+                # p_target = D.softmax(p_target)
                 critic_loss = cf_loss_fn(cf_x, cf_target, tx_x, tx_target, p_x, p_target)
                 D_loss = - critic_loss / float(config['num_D_accumulations'])
 
@@ -366,8 +376,10 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
             hx_target = D.linear_hx(hx_target)
             hx_x = torch.unsqueeze(hx_x, -1)
             hx_target = torch.unsqueeze(hx_target, -1)
-            tx_x = D.tx_linear(hx_x)
-            tx_target = D.tx_linear(hx_target)
+            tx_x = hx_x
+            tx_target = hx_target
+            # tx_x = D.tx_linear(hx_x)
+            # tx_target = D.tx_linear(hx_target)
 
             # classifier loss
             if config['require_classifier'] == True:
@@ -400,17 +412,25 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
             else:
                 # calculate projection
                 CLIP_x, _ = image_encoder(G_z)
-                x_embed_x = get_x_gt(CLIP_x, config['x_dim'])
-                x_embed_x = D.proj_embed(x_embed_x)
+                x_embed_x = CLIP_x.view(CLIP_x.shape[0], -1)
+                x_embed_x = D.linear_x(x_embed_x)
+                # x_embed_x = get_x_gt(CLIP_x, config['x_dim'])
+                # x_embed_x = D.proj_embed(x_embed_x)
                 CLIP_target, _ = image_encoder(x[counter])
-                x_embed_target = get_x_gt(CLIP_target, config['x_dim'])
-                x_embed_target = D.proj_embed(x_embed_target)
+                x_embed_target = CLIP_target.view(CLIP_target.shape[0], -1)
+                x_embed_target = D.linear_x(x_embed_target)
+                # x_embed_target = get_x_gt(CLIP_target, config['x_dim'])
+                # x_embed_target = D.proj_embed(x_embed_target)
                 p_x = D.linear_proj(D.linear_y(sent_emb)) * x_embed_x
+                p_x = p_x.mean(1).unsqueeze(-1)
+                p_x = D.sigmoid(p_x)
                 p_target = D.linear_proj(D.linear_y(sent_emb)) * x_embed_target
+                p_target = p_target.mean(1).unsqueeze(-1)
+                p_target = D.sigmoid(p_target)
 
             # calculate critic loss
-            p_x = D.softmax(p_x)
-            p_target = D.softmax(p_target)
+            # p_x = D.softmax(p_x)
+            # p_target = D.softmax(p_target)
             critic_loss = cf_loss_fn(cf_x, cf_target, tx_x, tx_target, p_x, p_target)
             G_loss = critic_loss / float(config['num_G_accumulations'])
 
