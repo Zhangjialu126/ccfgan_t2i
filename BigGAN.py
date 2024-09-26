@@ -556,15 +556,17 @@ class Discriminator(nn.Module):
             self.linear_hx = self.which_linear(self.arch['out_channels'][-1], self.output_dim)
             # classifier
             if self.require_classifier:
-                self.ac = self.which_linear(self.arch['out_channels'][-1], self.x_dim)
-                self.mi = self.which_linear(self.arch['out_channels'][-1], self.x_dim)
-                self.adc = self.which_linear(self.arch['out_channels'][-1], self.x_dim * 2)
+                self.c_dim = 3 * 768
+                # self.c_dim = 3 * 768 * 7 * 7
+                self.ac = self.which_linear(self.arch['out_channels'][-1], self.c_dim)
+                self.mi = self.which_linear(self.arch['out_channels'][-1], self.c_dim)
+                self.adc = self.which_linear(self.arch['out_channels'][-1], self.c_dim * 2)
                 if self.c_mode == 'adc':
-                    self.tx_linear = self.which_linear(1, self.x_dim * 2)
+                    self.tx_linear = self.which_linear(1, kwargs['batch_size'] * 2)
                 else:
-                    self.tx_linear = self.which_linear(1, self.x_dim)
+                    self.tx_linear = self.which_linear(1, kwargs['batch_size'])
             else:
-                # self.tx_linear = self.which_linear(1, self.x_dim)
+                self.tx_linear = self.which_linear(1, kwargs['batch_size'])
                 # self.proj_embed = self.which_embedding(self.x_dim, self.x_dim)
                 self.linear_proj = self.which_linear(self.arch['out_channels'][-1], self.x_dim)
                 self.linear_x = self.which_linear(3 * 768 * 7 * 7, self.x_dim)

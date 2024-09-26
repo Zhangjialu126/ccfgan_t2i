@@ -1,7 +1,7 @@
 ''' train_fns.py
 Functions for the main loop of training different conditional image models
 '''
-import torch
+import  torch
 import torch.nn as nn
 import torchvision
 import os
@@ -22,6 +22,7 @@ from torch.nn.functional import adaptive_avg_pool2d
 from scipy import linalg
 import inception_utils
 import random
+import torch.nn.functional as F
 
 
 # Dummy training function for debugging
@@ -32,15 +33,22 @@ def dummy_training_function():
     return train
 
 
-def get_x_gt(feat_in, y_dim):
-    features_flat = feat_in.view(feat_in.shape[0], -1)
-    min_val = features_flat.min(dim=1, keepdim=True)[0]
-    max_val = features_flat.max(dim=1, keepdim=True)[0]
-    normalized_features = (features_flat - min_val) / (max_val - min_val)
-    scaled_features = normalized_features * (y_dim - 1)
-    quantized_features = scaled_features.round().long()
-    ground_truth = quantized_features.max(dim=1)[0]
-    return ground_truth
+def get_x_gt(feat_in):
+    feat_flattened = torch.mean(feat_in, dim=-1)
+    feat_flattened = torch.mean(feat_flattened, dim=-1)
+    feat_flattened = feat_flattened.view(feat_flattened.size(0), -1)
+    # feat_flattened = feat_flattened.view(feat_flattened.size(0), -1)
+    return feat_flattened
+
+
+def normalize_features(features):
+    return F.normalize(features, p=2, dim=1)
+
+
+def get_p_from_cossim(feat1, feat2):
+    cossim = torch.mm(feat1, feat2.t())
+    p = torch.sigmoid(cossim)
+    return p
 
 
 def RCFGAN_training_function(G, D, GD, loss_fn, z_, y_, ema, state_dict, config, writer):
@@ -268,36 +276,44 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
                 hx_target = D.linear_hx(hx_target)
                 hx_x = torch.unsqueeze(hx_x, -1)
                 hx_target = torch.unsqueeze(hx_target, -1)
-                tx_x = hx_x
-                tx_target = hx_target
-                # tx_x = D.tx_linear(hx_x)
-                # tx_target = D.tx_linear(hx_target)
+                # tx_x = hx_x
+                # tx_target = hx_target
+                tx_x = D.tx_linear(hx_x)
+                tx_target = D.tx_linear(hx_target)
 
                 # classifier loss
                 if config['require_classifier'] == True:
-                    p_x_ac, p_x_mi, p_x_adc = D.classifier(D.linear_y(sent_emb))
-                    p_target_ac, p_target_mi, p_target_adc = D.classifier(D.linear_y(sent_emb))
-                    CLIP_x, _ = image_encoder(G_z)
-                    x_gt_x = get_x_gt(CLIP_x, config['x_dim'])
+                    feat_x_ac, feat_x_mi, feat_x_adc = D.classifier(h_x)
+                    feat_x_ac_normalized, feat_x_mi_normalized, feat_x_adc_normalized = [normalize_features(feat) for feat in [feat_x_ac, feat_x_mi, feat_x_adc]]
+                    feat_target_ac, feat_target_mi, feat_target_adc = D.classifier(h_target)
+                    feat_target_ac_normalized, feat_target_mi_normalized, feat_target_adc_normalized = [normalize_features(feat) for feat in [feat_target_ac, feat_target_mi, feat_target_adc]]
+                    # CLIP_x, _ = image_encoder(G_z)
+                    # feat_x_gt_x = get_x_gt(CLIP_x)
+                    # feat_x_gt_x_normalized = F.normalize(feat_x_gt_x, p=2, dim=1)
                     CLIP_target, _ = image_encoder(x[counter])
-                    x_gt_target = get_x_gt(CLIP_target, config['x_dim'])
+                    feat_gt= get_x_gt(CLIP_target)
+                    feat_gt_normalized = normalize_features(feat_gt)
                     if config['c_mode'] == 'ac':
+                        p_x_ac = get_p_from_cossim(feat_x_ac_normalized, feat_gt_normalized)
+                        p_target_ac = get_p_from_cossim(feat_target_ac_normalized, feat_gt_normalized)
                         p_x = p_x_ac
                         p_target = p_target_ac
-                        D_ac_loss = CELoss(p_target_ac, x_gt_target)
+                        D_ac_loss = - torch.cosine_similarity(feat_target_ac_normalized, feat_gt_normalized).mean()
                         D_aux_loss = D_ac_loss
                     elif config['c_mode'] == 'tac':
+                        p_x_ac = get_p_from_cossim(feat_x_ac_normalized, feat_gt_normalized)
+                        p_target_ac = get_p_from_cossim(feat_target_ac_normalized, feat_gt_normalized)
                         p_x = p_x_ac
                         p_target = p_target_ac
-                        D_ac_loss = CELoss(p_target_ac, x_gt_target)
-                        D_mi_loss = CELoss(p_x_mi, x_gt_x)
+                        D_ac_loss = - torch.cosine_similarity(feat_target_ac_normalized, feat_gt_normalized).mean()
+                        D_mi_loss = - torch.cosine_similarity(feat_x_mi_normalized, feat_gt_normalized).mean()
                         D_aux_loss = D_ac_loss + D_mi_loss
-                    elif config['c_mode'] == 'adc':
-                        p_x = p_x_adc
-                        p_target = p_target_adc
-                        D_adc_loss_real = CELoss(p_target_adc, x_gt_target * 2)
-                        D_adc_loss_fake = CELoss(p_x_adc, x_gt_x * 2 + 1)
-                        D_aux_loss = D_adc_loss_real + D_adc_loss_fake
+                    # elif config['c_mode'] == 'adc':
+                    #     p_x = p_x_adc
+                    #     p_target = p_target_adc
+                    #     D_adc_loss_real = CELoss(p_target_adc, x_gt_target * 2)
+                    #     D_adc_loss_fake = CELoss(p_x_adc, x_gt_x * 2 + 1)
+                    #     D_aux_loss = D_adc_loss_real + D_adc_loss_fake
                     else:
                         print('The input classifer mode is not available!')
                     C_loss_D = config['CD_lambda'] * D_aux_loss / float(config['num_D_accumulations'])
@@ -376,36 +392,47 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
             hx_target = D.linear_hx(hx_target)
             hx_x = torch.unsqueeze(hx_x, -1)
             hx_target = torch.unsqueeze(hx_target, -1)
-            tx_x = hx_x
-            tx_target = hx_target
-            # tx_x = D.tx_linear(hx_x)
-            # tx_target = D.tx_linear(hx_target)
+            # tx_x = hx_x
+            # tx_target = hx_target
+            tx_x = D.tx_linear(hx_x)
+            tx_target = D.tx_linear(hx_target)
 
             # classifier loss
             if config['require_classifier'] == True:
-                p_x_ac, p_x_mi, p_x_adc = D.classifier(D.linear_y(sent_emb))
-                p_target_ac, p_target_mi, p_target_adc = D.classifier(D.linear_y(sent_emb))
-                CLIP_x, _ = image_encoder(G_z)
-                x_gt_x = get_x_gt(CLIP_x, config['x_dim'])
+                feat_x_ac, feat_x_mi, feat_x_adc = D.classifier(h_x)
+                feat_x_ac_normalized, feat_x_mi_normalized, feat_x_adc_normalized = [normalize_features(feat) for feat
+                                                                                     in
+                                                                                     [feat_x_ac, feat_x_mi, feat_x_adc]]
+                feat_target_ac, feat_target_mi, feat_target_adc = D.classifier(h_target)
+                feat_target_ac_normalized, feat_target_mi_normalized, feat_target_adc_normalized = [
+                    normalize_features(feat) for feat in [feat_target_ac, feat_target_mi, feat_target_adc]]
+                # CLIP_x, _ = image_encoder(G_z)
+                # feat_x_gt_x = get_x_gt(CLIP_x)
+                # feat_x_gt_x_normalized = F.normalize(feat_x_gt_x, p=2, dim=1)
                 CLIP_target, _ = image_encoder(x[counter])
-                x_gt_target = get_x_gt(CLIP_target, config['x_dim'])
+                feat_gt = get_x_gt(CLIP_target)
+                feat_gt_normalized = normalize_features(feat_gt)
                 if config['c_mode'] == 'ac':
+                    p_x_ac = get_p_from_cossim(feat_x_ac_normalized, feat_gt_normalized)
+                    p_target_ac = get_p_from_cossim(feat_target_ac_normalized, feat_gt_normalized)
                     p_x = p_x_ac
                     p_target = p_target_ac
-                    G_ac_loss = CELoss(p_x_ac, x_gt_x)
+                    G_ac_loss = - torch.cosine_similarity(feat_x_ac_normalized, feat_gt_normalized).mean()
                     G_aux_loss = G_ac_loss
                 elif config['c_mode'] == 'tac':
+                    p_x_ac = get_p_from_cossim(feat_x_ac_normalized, feat_gt_normalized)
+                    p_target_ac = get_p_from_cossim(feat_target_ac_normalized, feat_gt_normalized)
                     p_x = p_x_ac
                     p_target = p_target_ac
-                    G_ac_loss = CELoss(p_x_ac, x_gt_x)
-                    G_mi_loss = CELoss(p_x_mi, x_gt_x)
+                    G_ac_loss = - torch.cosine_similarity(feat_x_ac_normalized, feat_gt_normalized).mean()
+                    G_mi_loss = - torch.cosine_similarity(feat_x_mi_normalized, feat_gt_normalized).mean()
                     G_aux_loss = G_ac_loss + G_mi_loss
-                elif config['c_mode'] == 'adc':
-                    p_x = p_x_adc
-                    p_target = p_target_adc
-                    G_adc_loss_pos = CELoss(p_x_adc, x_gt_x * 2)
-                    G_adc_loss_neg = CELoss(p_x_adc, x_gt_x * 2 + 1)
-                    G_aux_loss = G_adc_loss_pos - G_adc_loss_neg
+                # elif config['c_mode'] == 'adc':
+                #     p_x = p_x_adc
+                #     p_target = p_target_adc
+                #     G_adc_loss_pos = CELoss(p_x_adc, x_gt_x * 2)
+                #     G_adc_loss_neg = CELoss(p_x_adc, x_gt_x * 2 + 1)
+                #     G_aux_loss = G_adc_loss_pos - G_adc_loss_neg
                 else:
                     print('The input classifer mode is not available!')
                 C_loss_G = config['CG_lambda'] * G_aux_loss / float(config['num_G_accumulations'])
