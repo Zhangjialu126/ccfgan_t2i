@@ -21,20 +21,20 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "git-widget-placeholder": "xgy",
-    "last_opened_file_path": "E:/cfgan/big_cf_gan_PAMI/train_fns.py",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "two.files.diff.last.used.file": "E:/cfgan/big_cf_gan_PAMI/train_fns.py",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;xgy&quot;,
+    &quot;last_opened_file_path&quot;: &quot;E:/ccfgan/stability/bigocf_gan-cond-stability&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;two.files.diff.last.used.file&quot;: &quot;E:/cfgan/big_cf_gan_PAMI/train_fns.py&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
@@ -52,7 +52,10 @@
       <option name="presentableId" value="Default" />
       <updated>1727074597575</updated>
       <workItem from="1727074598866" duration="2590000" />
-      <workItem from="1727077217824" duration="27136000" />
+      <workItem from="1727077217824" duration="36361000" />
+      <workItem from="1727427020371" duration="13424000" />
+      <workItem from="1728529055584" duration="2144000" />
+      <workItem from="1728627373340" duration="1186000" />
     </task>
     <servers />
   </component>

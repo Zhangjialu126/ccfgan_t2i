@@ -48,7 +48,8 @@ def normalize_features(features):
 def get_p_from_cossim(feat1, feat2):
     cossim = torch.mm(feat1, feat2.t())
     p = torch.sigmoid(cossim)
-    return p
+    p = p.diag()
+    return cossim, p
 
 
 def RCFGAN_training_function(G, D, GD, loss_fn, z_, y_, ema, state_dict, config, writer):
@@ -249,6 +250,7 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
             utils.toggle_grad(image_encoder, False)
             utils.toggle_grad(text_encoder, False)
 
+        margin = 0.2
 
         for step_index in range(config['num_D_steps']):
             # If accumulating gradients, loop multiple times before an optimizer step
@@ -276,10 +278,10 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
                 hx_target = D.linear_hx(hx_target)
                 hx_x = torch.unsqueeze(hx_x, -1)
                 hx_target = torch.unsqueeze(hx_target, -1)
-                # tx_x = hx_x
-                # tx_target = hx_target
-                tx_x = D.tx_linear(hx_x)
-                tx_target = D.tx_linear(hx_target)
+                tx_x = hx_x
+                tx_target = hx_target
+                # tx_x = D.tx_linear(hx_x)
+                # tx_target = D.tx_linear(hx_target)
 
                 # classifier loss
                 if config['require_classifier'] == True:
@@ -294,15 +296,18 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
                     feat_gt= get_x_gt(CLIP_target)
                     feat_gt_normalized = normalize_features(feat_gt)
                     if config['c_mode'] == 'ac':
-                        p_x_ac = get_p_from_cossim(feat_x_ac_normalized, feat_gt_normalized)
-                        p_target_ac = get_p_from_cossim(feat_target_ac_normalized, feat_gt_normalized)
-                        p_x = p_x_ac
-                        p_target = p_target_ac
+                        cossim_x_ac, p_x_ac = get_p_from_cossim(feat_x_ac_normalized, feat_gt_normalized)
+                        cossim_target_ac, p_target_ac = get_p_from_cossim(feat_target_ac_normalized, feat_gt_normalized)
+                        p_x = p_x_ac.unsqueeze(1)
+                        p_target = p_target_ac.unsqueeze(1)
                         D_ac_loss = - torch.cosine_similarity(feat_target_ac_normalized, feat_gt_normalized).mean()
                         D_aux_loss = D_ac_loss
+                        contrastive_loss_x = torch.mean(F.relu(cossim_x_ac.diag().unsqueeze(1) - cossim_x_ac + margin))
+                        contrastive_loss_target = torch.mean(F.relu(cossim_target_ac.diag().unsqueeze(1) - cossim_target_ac + margin))
+                        contrastive_loss = contrastive_loss_x + contrastive_loss_target
                     elif config['c_mode'] == 'tac':
-                        p_x_ac = get_p_from_cossim(feat_x_ac_normalized, feat_gt_normalized)
-                        p_target_ac = get_p_from_cossim(feat_target_ac_normalized, feat_gt_normalized)
+                        cossim_x_ac, p_x_ac = get_p_from_cossim(feat_x_ac_normalized, feat_gt_normalized)
+                        cossim_target_ac, p_target_ac = get_p_from_cossim(feat_target_ac_normalized, feat_gt_normalized)
                         p_x = p_x_ac
                         p_target = p_target_ac
                         D_ac_loss = - torch.cosine_similarity(feat_target_ac_normalized, feat_gt_normalized).mean()
@@ -317,6 +322,7 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
                     else:
                         print('The input classifer mode is not available!')
                     C_loss_D = config['CD_lambda'] * D_aux_loss / float(config['num_D_accumulations'])
+                    contrastive_loss = contrastive_loss / float(config['num_D_accumulations'])
                 else:
                     # calculate projection
                     CLIP_x, _ = image_encoder(G_z)
@@ -344,7 +350,7 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
 
                 # total loss
                 if config['require_classifier'] == True:
-                    total_loss = D_loss + C_loss_D
+                    total_loss = D_loss + C_loss_D + 1.0 *  contrastive_loss
                 else:
                     total_loss = D_loss
 
@@ -392,10 +398,10 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
             hx_target = D.linear_hx(hx_target)
             hx_x = torch.unsqueeze(hx_x, -1)
             hx_target = torch.unsqueeze(hx_target, -1)
-            # tx_x = hx_x
-            # tx_target = hx_target
-            tx_x = D.tx_linear(hx_x)
-            tx_target = D.tx_linear(hx_target)
+            tx_x = hx_x
+            tx_target = hx_target
+            # tx_x = D.tx_linear(hx_x)
+            # tx_target = D.tx_linear(hx_target)
 
             # classifier loss
             if config['require_classifier'] == True:
@@ -413,12 +419,15 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
                 feat_gt = get_x_gt(CLIP_target)
                 feat_gt_normalized = normalize_features(feat_gt)
                 if config['c_mode'] == 'ac':
-                    p_x_ac = get_p_from_cossim(feat_x_ac_normalized, feat_gt_normalized)
-                    p_target_ac = get_p_from_cossim(feat_target_ac_normalized, feat_gt_normalized)
-                    p_x = p_x_ac
-                    p_target = p_target_ac
+                    cossim_x_ac, p_x_ac = get_p_from_cossim(feat_x_ac_normalized, feat_gt_normalized)
+                    cossim_target_ac, p_target_ac = get_p_from_cossim(feat_target_ac_normalized, feat_gt_normalized)
+                    p_x = p_x_ac.unsqueeze(1)
+                    p_target = p_target_ac.unsqueeze(1)
                     G_ac_loss = - torch.cosine_similarity(feat_x_ac_normalized, feat_gt_normalized).mean()
                     G_aux_loss = G_ac_loss
+                    contrastive_loss_x = torch.mean(F.relu(cossim_x_ac.diag().unsqueeze(1) - cossim_x_ac + margin))
+                    contrastive_loss_target = torch.mean(F.relu(cossim_target_ac.diag().unsqueeze(1) - cossim_target_ac + margin))
+                    contrastive_loss = contrastive_loss_x + contrastive_loss_target
                 elif config['c_mode'] == 'tac':
                     p_x_ac = get_p_from_cossim(feat_x_ac_normalized, feat_gt_normalized)
                     p_target_ac = get_p_from_cossim(feat_target_ac_normalized, feat_gt_normalized)
@@ -436,6 +445,7 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
                 else:
                     print('The input classifer mode is not available!')
                 C_loss_G = config['CG_lambda'] * G_aux_loss / float(config['num_G_accumulations'])
+                contrastive_loss = contrastive_loss / float(config['num_G_accumulations'])
             else:
                 # calculate projection
                 CLIP_x, _ = image_encoder(G_z)
@@ -467,7 +477,7 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
 
             # total loss
             if config['require_classifier'] == True:
-                total_loss = G_loss + C_loss_G + text_img_sim
+                total_loss = G_loss + C_loss_G + 1.0 *  contrastive_loss + 1.0 *  text_img_sim
             else:
                 total_loss = G_loss + text_img_sim
 
@@ -492,13 +502,15 @@ def CFGAN_training_function_cond(G, D, image_encoder, text_encoder, GD, cf_loss_
                    'D_loss': float(D_loss.item()) * 1e4,
                    'C_loss_G': float(C_loss_G.item()) * 1e4,
                    'C_loss_D': float(C_loss_D.item()) * 1e4,
-                   'text_img_sim': float(text_img_sim.item()) * 1e4}
+                   'text_img_sim': float(text_img_sim.item()) * 1e4,
+                   'contrastive_loss': float(contrastive_loss.item()) * 1e4}
             # Return G's loss and the components of D's loss.
             writer.add_scalar('G_loss', G_loss.item(), state_dict['itr'])
             writer.add_scalar('D_loss', D_loss.item(), state_dict['itr'])
             writer.add_scalar('C_loss_G', C_loss_G.item(), state_dict['itr'])
             writer.add_scalar('C_loss_D', C_loss_D.item(), state_dict['itr'])
             writer.add_scalar('text_img_sim', text_img_sim.item(), state_dict['itr'])
+            writer.add_scalar('contrastive_loss', contrastive_loss.item(), state_dict['itr'])
         else:
             out = {'G_loss': float(G_loss.item()) * 1e4,
                    'D_loss': float(D_loss.item()) * 1e4,
